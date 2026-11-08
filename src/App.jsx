@@ -114,6 +114,7 @@ export default function App() {
   });
   const [webhookSaved, setWebhookSaved] = useState(false);
   const [walletAccount, setWalletAccount] = useState(null);
+  const [walletVerified, setWalletVerified] = useState(false);
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletMessage, setWalletMessage] = useState("");
   const [proof, setProof] = useState(() => {
@@ -134,14 +135,39 @@ export default function App() {
   }, [paused]);
 
   useEffect(() => {
-    const wallet = getInjectedWallet();
-    if (!wallet?.on) return undefined;
-    const handleAccountsChanged = (accounts) => {
-      setWalletAccount(Array.isArray(accounts) && typeof accounts[0] === "string" ? accounts[0] : null);
-    };
-    wallet.on("accountsChanged", handleAccountsChanged);
-    return () => wallet.removeListener?.("accountsChanged", handleAccountsChanged);
-  }, []);
+  const wallet = getInjectedWallet();
+  if (!wallet?.on) return undefined;
+
+  const handleAccountsChanged = (accounts) => {
+    const account =
+      Array.isArray(accounts) && typeof accounts[0] === "string"
+        ? accounts[0]
+        : null;
+
+    setWalletAccount(account);
+    setWalletVerified(false);
+    setWalletMessage(
+      account
+        ? "Account changed. Reconnect and verify the Portaldot V3 Testnet."
+        : "Wallet disconnected."
+    );
+  };
+
+  const handleChainChanged = () => {
+    setWalletVerified(false);
+    setWalletMessage(
+      "Network changed. Reconnect to verify Portaldot V3 Testnet."
+    );
+  };
+
+  wallet.on("accountsChanged", handleAccountsChanged);
+  wallet.on("chainChanged", handleChainChanged);
+
+  return () => {
+    wallet.removeListener?.("accountsChanged", handleAccountsChanged);
+    wallet.removeListener?.("chainChanged", handleChainChanged);
+  };
+}, []);
 
   const endpoint = getEndpoint(endpointId);
 
@@ -286,33 +312,41 @@ export default function App() {
   };
 
   const handleConnectWallet = async () => {
-    setWalletMessage("");
-    const wallet = getInjectedWallet();
-    if (!wallet) {
-      setWalletMessage("No injected EVM wallet was found. Install or unlock MetaMask, then retry.");
-      return;
+  setWalletMessage("");
+  setWalletVerified(false);
+
+  const wallet = getInjectedWallet();
+  if (!wallet) {
+    setWalletAccount(null);
+    setWalletMessage("No injected EVM wallet was found. Install or unlock MetaMask, then retry.");
+    return;
+  }
+
+  setWalletBusy(true);
+  try {
+    const accounts = await wallet.request({ method: "eth_requestAccounts" });
+    if (!Array.isArray(accounts) || typeof accounts[0] !== "string") {
+      throw new Error("The wallet did not return an account.");
     }
 
-    setWalletBusy(true);
-    try {
-      const accounts = await wallet.request({ method: "eth_requestAccounts" });
-      if (!Array.isArray(accounts) || typeof accounts[0] !== "string") {
-        throw new Error("The wallet did not return an account.");
-      }
-      setWalletAccount(accounts[0]);
-      await ensurePortaldotTestnet(wallet);
-      setWalletMessage("Wallet connected to Portaldot V3 Testnet.");
-    } catch (error) {
-      setWalletMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setWalletBusy(false);
-    }
-  };
+    await ensurePortaldotTestnet(wallet);
+
+    setWalletAccount(accounts[0]);
+    setWalletVerified(true);
+    setWalletMessage("Wallet connected and verified on Portaldot V3 Testnet.");
+  } catch (error) {
+    setWalletAccount(null);
+    setWalletVerified(false);
+    setWalletMessage(error instanceof Error ? error.message : String(error));
+  } finally {
+    setWalletBusy(false);
+  }
+};
 
   const handleDeployProof = async () => {
     setWalletMessage("");
     const wallet = getInjectedWallet();
-    if (!wallet || !walletAccount) {
+    if (!wallet || !walletAccount || !walletVerified) {
       setWalletMessage("Connect your wallet before deploying the proof contract.");
       return;
     }
@@ -345,7 +379,7 @@ export default function App() {
   const handleSendProof = async () => {
     setWalletMessage("");
     const wallet = getInjectedWallet();
-    if (!wallet || !walletAccount || !proof?.contractAddress) {
+    if (!wallet || !walletAccount || !walletVerified || !proof?.contractAddress) {
       setWalletMessage("Connect your wallet and deploy the proof contract first.");
       return;
     }
@@ -626,25 +660,50 @@ export default function App() {
                 Testnet Wallet &amp; On-chain Proof
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Connect MetaMask, deploy the PortaPulse proof contract, then submit a signed pulse transaction.
-                No private key is requested or stored.
+                Connect MetaMask, verify Portaldot V3 Testnet, deploy the proof contract, and submit a signed pulse transaction. No private key is requested or stored.
               </p>
+              <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+  <p>You'll need testnet tPOT for transaction gas.</p>
+  <p>MetaMask uses an EVM address (0x...). Hackathon registration may require your native SS58 address (5...).</p>
+</div>
             </div>
             <button
               onClick={handleConnectWallet}
               disabled={walletBusy}
               className="shrink-0 bg-emerald-500/10 hover:bg-emerald-500/20 text-[#00E599] border border-emerald-500/30 text-xs font-semibold px-4 py-2 rounded-lg transition disabled:opacity-50"
             >
-              {walletBusy ? "Waiting for wallet…" : walletAccount
-                ? `${walletAccount.slice(0, 6)}…${walletAccount.slice(-4)}`
-                : "Connect MetaMask"}
+              {walletBusy
+  ? "Connecting…"
+  : walletVerified && walletAccount
+    ? `${walletAccount.slice(0, 6)}…${walletAccount.slice(-4)} ✓`
+    : walletAccount
+      ? "Verify network"
+      : "Connect MetaMask"}
             </button>
           </div>
+          <div className="mt-3 flex items-center gap-2 text-xs">
+  <span
+    className={`h-2 w-2 rounded-full ${
+      walletVerified
+        ? "bg-emerald-400"
+        : walletAccount
+          ? "bg-amber-400"
+          : "bg-slate-500"
+    }`}
+  />
+  <span className="text-slate-400">
+    {walletVerified
+      ? "Connected · Portaldot V3 Testnet verified"
+      : walletAccount
+        ? "Account detected · Network verification required"
+        : "Wallet not connected"}
+  </span>
+</div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <button
               onClick={handleDeployProof}
-              disabled={walletBusy || !walletAccount || Boolean(proof?.contractAddress)}
+              disabled={walletBusy || !walletAccount || !walletVerified || Boolean(proof?.contractAddress)}
               className="bg-[#0B0E14] border border-slate-800 hover:border-[#00E599]/60 rounded-xl p-4 text-left transition disabled:opacity-50"
             >
               <span className="block text-xs font-semibold text-slate-200">1. Deploy proof contract</span>
@@ -654,7 +713,7 @@ export default function App() {
             </button>
             <button
               onClick={handleSendProof}
-              disabled={walletBusy || !walletAccount || !proof?.contractAddress || Boolean(proof?.pulseTxHash)}
+              disabled={walletBusy || !walletAccount || !walletVerified || !proof?.contractAddress || Boolean(proof?.pulseTxHash)}
               className="bg-[#0B0E14] border border-slate-800 hover:border-[#00E599]/60 rounded-xl p-4 text-left transition disabled:opacity-50"
             >
               <span className="block text-xs font-semibold text-slate-200">2. Send on-chain pulse</span>
