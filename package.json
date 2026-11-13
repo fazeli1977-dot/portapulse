@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "deploy": "npm run build && gh-pages -d dist",
-    "test": "node --test worker/alert-rules.test.mjs src/lib/endpoints.test.js src/lib/evm-wallet.test.js",
+    "test": "node --test worker/alert-rules.test.mjs src/lib/endpoints.test.js src/lib/evm-wallet.test.js src/lib/wallet-connection.test.js",
     "worker": "node worker/heartbeat.mjs",
     "verify": "node scripts/verify-client.mjs",
     "compile:contract": "node scripts/compile-contract.mjs"

@@ -1,3 +1,4 @@
+import { createWalletConnectionHandler } from "./lib/wallet-connection.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -117,6 +118,9 @@ export default function App() {
   const [walletVerified, setWalletVerified] = useState(false);
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletMessage, setWalletMessage] = useState("");
+  const walletAttemptRef = useRef(0);
+  const walletEventAccountRef = useRef(null);
+  const walletEventSeenRef = useRef(false);
   const [proof, setProof] = useState(() => {
     try {
       return JSON.parse(window.localStorage.getItem(PROOF_STORAGE_KEY) ?? "null");
@@ -139,11 +143,15 @@ export default function App() {
   if (!wallet?.on) return undefined;
 
   const handleAccountsChanged = (accounts) => {
+    walletAttemptRef.current += 1;
     const account =
       Array.isArray(accounts) && typeof accounts[0] === "string"
         ? accounts[0]
         : null;
 
+    walletEventSeenRef.current = true;
+    walletEventAccountRef.current = account;
+    setWalletBusy(false);
     setWalletAccount(account);
     setWalletVerified(false);
     setWalletMessage(
@@ -311,37 +319,22 @@ export default function App() {
     setTimeout(() => setWebhookSaved(false), 3000);
   };
 
-  const handleConnectWallet = async () => {
-  setWalletMessage("");
-  setWalletVerified(false);
+  const handleConnectWallet = useCallback(() => {
+    const connectWallet = createWalletConnectionHandler({
+      walletAttemptRef,
+      walletEventAccountRef,
+      walletEventSeenRef,
+      getInjectedWallet,
+      ensurePortaldotTestnet,
+      targetChainId: PORTALDOT_TESTNET.chainId,
+      setWalletAccount,
+      setWalletVerified,
+      setWalletBusy,
+      setWalletMessage,
+    });
 
-  const wallet = getInjectedWallet();
-  if (!wallet) {
-    setWalletAccount(null);
-    setWalletMessage("No injected EVM wallet was found. Install or unlock MetaMask, then retry.");
-    return;
-  }
-
-  setWalletBusy(true);
-  try {
-    const accounts = await wallet.request({ method: "eth_requestAccounts" });
-    if (!Array.isArray(accounts) || typeof accounts[0] !== "string") {
-      throw new Error("The wallet did not return an account.");
-    }
-
-    await ensurePortaldotTestnet(wallet);
-
-    setWalletAccount(accounts[0]);
-    setWalletVerified(true);
-    setWalletMessage("Wallet connected and verified on Portaldot V3 Testnet.");
-  } catch (error) {
-    setWalletAccount(null);
-    setWalletVerified(false);
-    setWalletMessage(error instanceof Error ? error.message : String(error));
-  } finally {
-    setWalletBusy(false);
-  }
-};
+    return connectWallet();
+  }, []);
 
   const handleDeployProof = async () => {
     setWalletMessage("");
